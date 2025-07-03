@@ -1,10 +1,12 @@
 // File: app/history/page.tsx
+// THIS IS THE CORRECTED VERSION
 
 "use client";
 
 import { useState, useEffect } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import Link from 'next/link';
+// The line that imported 'Database' is now DELETED
 
 // Define the type for a single negotiation record
 type Negotiation = {
@@ -21,8 +23,9 @@ type Negotiation = {
 };
 
 export default function HistoryPage() {
-// CHANGE IT TO THIS
-const supabase = createClientComponentClient();  const [negotiations, setNegotiations] = useState<Negotiation[]>([]);
+  // The <Database> type has been REMOVED from this line
+  const supabase = createClientComponentClient();
+  const [negotiations, setNegotiations] = useState<Negotiation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -42,8 +45,8 @@ const supabase = createClientComponentClient();  const [negotiations, setNegotia
         if (error) {
           console.error('Error fetching negotiations:', error);
           setError('Failed to load negotiation history.');
-        } else {
-          setNegotiations(data);
+        } else if (data) {
+          setNegotiations(data as Negotiation[]);
         }
       }
       setLoading(false);
