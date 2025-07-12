@@ -13,14 +13,14 @@ interface Message {
 export function ChatInterface() {
   const supabase = createClientComponentClient();
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'assistant', content: "Hi! I'm your FairFare Co-pilot. Tell me about the item, or upload a picture, audio, or short video!" }
+    { role: 'assistant', content: "Hi! I'm your FairFare Co-pilot. Tell me about the item you're negotiating, or upload a picture, audio, or short video!" }
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
 
-  // --- NEW STATE FOR RECORDING ---
+  // State for recording
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -32,26 +32,25 @@ export function ChatInterface() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // --- NEW: FUNCTION TO START RECORDING ---
+  // Function to start recording audio
   const handleStartRecording = async () => {
-    // Clear any previously selected file
-    setFile(null);
+    setFile(null); // Clear any previously selected file
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       mediaRecorderRef.current = recorder;
-      audioChunksRef.current = []; // Reset chunks
+      audioChunksRef.current = [];
 
       recorder.ondataavailable = (event) => {
-        audioChunksRef.current.push(event.data);
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
       };
 
       recorder.onstop = () => {
-        // When recording stops, create a file and set it in state
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         const audioFile = new File([audioBlob], `recording-${Date.now()}.webm`, { type: 'audio/webm' });
         setFile(audioFile);
-        // Clean up the stream
         stream.getTracks().forEach(track => track.stop());
       };
 
@@ -63,9 +62,9 @@ export function ChatInterface() {
     }
   };
 
-  // --- NEW: FUNCTION TO STOP RECORDING ---
+  // Function to stop recording audio
   const handleStopRecording = () => {
-    if (mediaRecorderRef.current) {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
     }
@@ -82,14 +81,30 @@ export function ChatInterface() {
 
     if (file) {
       setUploading(true);
-      // ... (The entire upload logic is IDENTICAL and does not need to change)
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { /* ... error handling ... */ return; }
+      if (!user) {
+        setMessages(prev => [...prev, { role: 'assistant', content: "Error: You must be logged in to upload files." }]);
+        setIsLoading(false);
+        setUploading(false);
+        return;
+      }
+      
       const fileName = `${user.id}/${Date.now()}-${file.name}`;
       mimeType = file.type;
-      const { data, error } = await supabase.storage.from('media').upload(fileName, file);
-      if (error) { /* ... error handling ... */ return; }
+
+      const { error } = await supabase.storage
+        .from('media')
+        .upload(fileName, file);
+
+      if (error) {
+        setMessages(prev => [...prev, { role: 'assistant', content: `Storage Error: ${error.message}` }]);
+        setIsLoading(false);
+        setUploading(false);
+        return;
+      }
+      
       const { data: { publicUrl } } = supabase.storage.from('media').getPublicUrl(fileName);
+      
       fileUrl = publicUrl;
       setFile(null);
       setUploading(false);
@@ -97,15 +112,31 @@ export function ChatInterface() {
 
     const userMessageContent = input.trim() || `What do you think of this file?`;
     const userMessage: Message = { role: 'user', content: userMessageContent };
+    
     setMessages(prev => [...prev, userMessage]);
     setInput("");
     
     try {
-      // The API call is also IDENTICAL
-      const response = await fetch('/api/chat', { /* ... */ body: JSON.stringify({ messages: [...messages, userMessage], fileUrl: fileUrl, mimeType: mimeType }) });
-      if (!response.ok) { /* ... error handling ... */ }
+      // THE FIX IS HERE: We explicitly set the `method` to 'POST'.
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [...messages, userMessage],
+          fileUrl: fileUrl,
+          mimeType: mimeType,
+        }),
+      });
+
+      if (!response.ok) { 
+        const err = await response.json(); 
+        throw new Error(err.error || "Something went wrong."); 
+      }
+
       const data = await response.json();
-      setMessages(prev => [...prev, { role: 'assistant', content: data.message }]);
+      const assistantMessage: Message = { role: 'assistant', content: data.message };
+      setMessages(prev => [...prev, assistantMessage]);
+
     } catch (error: any) {
       setMessages(prev => [...prev, { role: 'assistant', content: `Sorry, an error occurred: ${error.message}` }]);
     } finally {
@@ -116,7 +147,13 @@ export function ChatInterface() {
   return (
     <div className="flex flex-col h-[75vh] w-full bg-gray-800 rounded-lg shadow-2xl">
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map((msg, index) => ( <div key={index} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-lg px-4 py-2 rounded-lg text-white ${msg.role === 'user' ? 'bg-blue-600' : 'bg-gray-700'}`}><p className="whitespace-pre-wrap">{msg.content}</p></div></div> ))}
+        {messages.map((msg, index) => (
+          <div key={index} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-lg px-4 py-2 rounded-lg text-white ${msg.role === 'user' ? 'bg-blue-600' : 'bg-gray-700'}`}>
+              <p className="whitespace-pre-wrap">{msg.content}</p>
+            </div>
+          </div>
+        ))}
         {isLoading && !uploading && (<div className="flex justify-start"><div className="max-w-lg px-4 py-2 rounded-lg bg-gray-700 animate-pulse"><p>AI is thinking...</p></div></div>)}
         <div ref={messagesEndRef} />
       </div>
@@ -124,14 +161,28 @@ export function ChatInterface() {
       <div className="p-4 border-t border-gray-700">
         {uploading && <div className="text-sm text-yellow-400 mb-2 animate-pulse">Uploading file... please wait.</div>}
         {isRecording && <div className="text-sm text-red-400 mb-2 animate-pulse">🔴 Recording audio...</div>}
-        {file && !uploading && ( <div className="mb-2 p-2 bg-gray-700 rounded-md relative w-fit"><p className="text-xs text-gray-300">File attached: <span className="font-semibold">{file.name}</span></p><button onClick={() => setFile(null)} className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full h-6 w-6 flex items-center justify-center text-xs font-bold">X</button></div> )}
+        {file && !uploading && (
+          <div className="mb-2 p-2 bg-gray-700 rounded-md relative w-fit">
+            <p className="text-xs text-gray-300">File attached: <span className="font-semibold">{file.name}</span></p>
+            <button onClick={() => setFile(null)} className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full h-6 w-6 flex items-center justify-center text-xs font-bold">X</button>
+          </div>
+        )}
         
         <form onSubmit={handleSubmit} className="flex items-center space-x-2">
-          {/* File Upload Button */}
-          <button type="button" onClick={() => fileInputRef.current?.click()} className="p-3 bg-gray-600 rounded-full hover:bg-gray-500 transition-colors disabled:opacity-50" title="Attach file" disabled={isRecording}>📎</button>
-          <input type="file" ref={fileInputRef} onChange={(e) => { setFile(e.target.files ? e.target.files[0] : null); e.target.value = ''; }} className="hidden" accept="image/*,audio/*,video/*"/>
+          <button type="button" onClick={() => fileInputRef.current?.click()} className="p-3 bg-gray-600 rounded-full hover:bg-gray-500 transition-colors disabled:opacity-50" title="Attach file" disabled={isRecording}>
+            📎
+          </button>
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={(e) => { 
+              setFile(e.target.files ? e.target.files[0] : null); 
+              if(e.target) e.target.value = ''; // Reset input to allow re-uploading the same file
+            }} 
+            className="hidden" 
+            accept="image/*,audio/*,video/*"
+          />
           
-          {/* --- NEW: DYNAMIC RECORD/STOP BUTTON --- */}
           {!isRecording ? (
             <button type="button" onClick={handleStartRecording} className="p-3 bg-gray-600 rounded-full hover:bg-gray-500 transition-colors" title="Record Audio">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M7 4a3 3 0 016 0v6a3 3 0 11-6 0V4z" /><path d="M5.5 10.5a.5.5 0 01.5-.5h8a.5.5 0 010 1h-8a.5.5 0 01-.5-.5z" /><path d="M10 18a7 7 0 100-14 7 7 0 000 14zM10 3a1 1 0 100 2 1 1 0 000-2z" /></svg>
@@ -142,8 +193,21 @@ export function ChatInterface() {
             </button>
           )}
 
-          <input type="text" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Describe the item or ask a question..." className="flex-1 bg-gray-700 border border-gray-600 rounded-md p-3 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500" disabled={isLoading || isRecording}/>
-          <button type="submit" disabled={isLoading || isRecording} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-md disabled:bg-gray-500">Send</button>
+          <input 
+            type="text" 
+            value={input} 
+            onChange={(e) => setInput(e.target.value)} 
+            placeholder="Describe the item or ask a question..." 
+            className="flex-1 bg-gray-700 border border-gray-600 rounded-md p-3 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500" 
+            disabled={isLoading || isRecording}
+          />
+          <button 
+            type="submit" 
+            disabled={isLoading || isRecording} 
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-md disabled:bg-gray-500"
+          >
+            Send
+          </button>
         </form>
       </div>
     </div>
