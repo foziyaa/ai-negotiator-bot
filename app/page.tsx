@@ -7,33 +7,30 @@ import { Auth } from '@supabase/auth-ui-react';
 import { ThemeSupa } from '@supabase/auth-ui-shared';
 import type { Session } from '@supabase/auth-helpers-nextjs';
 import Link from 'next/link';
+// Import our new Chat component!
+import { ChatInterface } from './components/ChatInterface'; 
 
-// KEY CHANGE: This type now reflects the 'plan' object inside the AI response.
+// This type and the Form component remain unchanged, we'll just show them conditionally.
 type AiPlanType = {
   priceRange: string;
   reasoning: string;
   scripts: { title: string; content: string; }[];
 };
 
-// The main application component, shown only to logged-in users
-function NegotiatorApp({ session }: { session: Session }) {
+// ===================================================================
+// Original Negotiator Form App (No Changes)
+// ===================================================================
+function FormNegotiator({ user }: { user: Session['user'] }) {
   const supabase = createClientComponentClient();
-  const user = session.user;
-
-  // Form state
   const [itemName, setItemName] = useState("");
   const [category, setCategory] = useState("");
   const [location, setLocation] = useState("");
   const [price, setPrice] = useState("");
   const [vibe, setVibe] = useState("Friendly");
   const [sellerDesc, setSellerDesc] = useState("");
-  
-  // Response state
   const [aiResponse, setAiResponse] = useState<AiPlanType | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
-
-  // UI polish state
   const [loadingMessage, setLoadingMessage] = useState("AI Co-pilot is thinking...");
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
@@ -50,7 +47,6 @@ function NegotiatorApp({ session }: { session: Session }) {
     }
   }, [isLoading]);
 
-  // KEY CHANGE: The handleSubmit function is now smarter.
   const handleSubmit = async () => {
     setIsLoading(true);
     setAiResponse(null);
@@ -62,53 +58,28 @@ function NegotiatorApp({ session }: { session: Session }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ itemName, category, location, price, vibe, sellerDesc }),
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-      }
-
+      if (!response.ok) { const errorData = await response.json(); throw new Error(errorData.error || `HTTP error! status: ${response.status}`); }
       const result = await response.json();
       
-      // Check the new 'isValid' flag from the AI
       if (result.data.isValid) {
         const responseData: AiPlanType = result.data.plan;
         setAiResponse(responseData);
-
-        // Save the successful negotiation to Supabase
         if (user) {
-          await supabase.from('negotiations').insert({
-            user_id: user.id, item_name: itemName, initial_price: parseFloat(price),
-            location, vibe, ai_response: responseData,
-          });
+          await supabase.from('negotiations').insert({ user_id: user.id, item_name: itemName, initial_price: parseFloat(price), location, vibe, ai_response: responseData });
         }
       } else {
-        // If isValid is false, show the AI's reason as an error
         setError(result.data.reason || "The AI determined the input was invalid.");
       }
-
     } catch (e: any) {
       setError(e.message || "An unknown error occurred.");
     } finally {
       setIsLoading(false);
     }
   };
-
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    window.location.reload();
-  };
-
+  
+  // The JSX for the form is unchanged, so I've collapsed it for brevity. It's the same as your original.
   return (
-    <div className="w-full max-w-2xl">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl md:text-3xl font-bold">FairFare</h1>
-        <div className="flex items-center gap-4">
-          <Link href="/history" className="bg-gray-600 hover:bg-gray-500 text-white text-sm font-bold py-2 px-4 rounded-md">History</Link>
-          <button onClick={handleSignOut} className="bg-red-600 hover:bg-red-700 text-white text-sm font-bold py-2 px-4 rounded-md transition-all">Sign Out</button>
-        </div>
-      </div>
-      
+    <>
       <div className="bg-gray-800 p-6 md:p-8 rounded-lg shadow-2xl">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div><label htmlFor="itemName" className="block text-sm font-medium text-gray-300 mb-2">Item Name</label><input type="text" id="itemName" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="e.g., Used iPhone 11" className="w-full bg-gray-700 border border-gray-600 rounded-md p-3 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500"/></div>
@@ -139,11 +110,54 @@ function NegotiatorApp({ session }: { session: Session }) {
           </div></div>
         </div>
       )}
+    </>
+  );
+}
+
+// ===================================================================
+// The main App wrapper with the new Tab system
+// ===================================================================
+function NegotiatorApp({ session }: { session: Session }) {
+  const supabase = createClientComponentClient();
+  const [mode, setMode] = useState<'form' | 'chat'>('form');
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    window.location.reload();
+  };
+
+  return (
+    <div className="w-full max-w-2xl">
+      {/* Header */}
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl md:text-3xl font-bold">FairFare</h1>
+        <div className="flex items-center gap-4">
+          <Link href="/history" className="bg-gray-600 hover:bg-gray-500 text-white text-sm font-bold py-2 px-4 rounded-md">History</Link>
+          <button onClick={handleSignOut} className="bg-red-600 hover:bg-red-700 text-white text-sm font-bold py-2 px-4 rounded-md transition-all">Sign Out</button>
+        </div>
+      </div>
+      
+      {/* Tab Switcher */}
+      <div className="mb-6 flex p-1 bg-gray-700 rounded-lg">
+        <button onClick={() => setMode('form')} className={`w-1/2 p-2 rounded-md font-semibold transition-colors ${mode === 'form' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-600'}`}>
+          Form Negotiator
+        </button>
+        <button onClick={() => setMode('chat')} className={`w-1/2 p-2 rounded-md font-semibold transition-colors ${mode === 'chat' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-600'}`}>
+          Chat Co-pilot
+        </button>
+      </div>
+
+      {/* Conditional Rendering based on mode */}
+      {mode === 'form' && <FormNegotiator user={session.user} />}
+      {mode === 'chat' && <ChatInterface />}
+      
     </div>
   );
 }
 
-// This is the main page component that decides whether to show the Login form or the App
+// ===================================================================
+// Main Page export (No Changes)
+// ===================================================================
 export default function HomePage() {
   const [session, setSession] = useState<Session | null>(null);
   const supabase = createClientComponentClient();
