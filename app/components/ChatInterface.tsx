@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, FormEvent, useEffect, useRef } from 'react';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'; // Import Supabase client
 
 // Define the structure for a single message in our chat
 interface Message {
@@ -9,29 +10,19 @@ interface Message {
   content: string;
 }
 
-// Helper function to convert a file to a Base64 string
-const toBase64 = (file: File): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = error => reject(error);
-  });
-};
-
-
 export function ChatInterface() {
+  const supabase = createClientComponentClient(); // Initialize Supabase client
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'assistant', content: "Hi! I'm your FairFare Co-pilot. Tell me about the item you're negotiating, or upload a picture!" }
+    { role: 'assistant', content: "Hi! I'm your FairFare Co-pilot. Tell me about the item, or upload a picture, audio, or short video!" }
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-
-  // NEW: State to hold the selected image file
-  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  // NEW: State for tracking upload progress
+  const [uploading, setUploading] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null); // Ref to trigger the file input
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -39,32 +30,63 @@ export function ChatInterface() {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!input.trim() && !imageFile) return;
+    if (!input.trim() && !file) return;
 
-    const userMessageContent = input.trim() || (imageFile ? `What do you think of this ${imageFile.name}?` : "");
+    let fileUrl: string | null = null;
+    let mimeType: string | null = null;
+    
+    setIsLoading(true);
+
+    // --- NEW: UPLOAD LOGIC ---
+    if (file) {
+      setUploading(true); // Show the uploading indicator
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setMessages(prev => [...prev, { role: 'assistant', content: "Error: You must be logged in to upload files." }]);
+        setIsLoading(false);
+        return;
+      }
+      
+      const fileName = `${user.id}/${Date.now()}-${file.name}`;
+      mimeType = file.type;
+
+      const { data, error } = await supabase.storage
+        .from('media')
+        .upload(fileName, file);
+
+      if (error) {
+        setMessages(prev => [...prev, { role: 'assistant', content: `Storage Error: ${error.message}` }]);
+        setIsLoading(false);
+        setUploading(false);
+        return;
+      }
+
+      // Get the public URL of the uploaded file
+      const { data: { publicUrl } } = supabase.storage
+        .from('media')
+        .getPublicUrl(fileName);
+      
+      fileUrl = publicUrl;
+      setFile(null); // Clear the file after successful upload
+      setUploading(false);
+    }
+    // --- END OF UPLOAD LOGIC ---
+
+    const userMessageContent = input.trim() || `What do you think of this file?`;
     const userMessage: Message = { role: 'user', content: userMessageContent };
     
     setMessages(prev => [...prev, userMessage]);
     setInput("");
-    setIsLoading(true);
-
-    let base64Image: string | null = null;
-    let mimeType: string | null = null;
-
-    if (imageFile) {
-      base64Image = await toBase64(imageFile);
-      mimeType = imageFile.type;
-      setImageFile(null); // Clear image after processing
-    }
-
+    
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [...messages, userMessage], // Send history
-          image: base64Image, // Send the image data
-          mimeType: mimeType, // Send the image type
+          messages: [...messages, userMessage],
+          // Send the URL instead of the file data
+          fileUrl: fileUrl, 
+          mimeType: mimeType,
         }),
       });
 
@@ -84,8 +106,8 @@ export function ChatInterface() {
 
   return (
     <div className="flex flex-col h-[75vh] w-full bg-gray-800 rounded-lg shadow-2xl">
-      {/* CHAT AREA */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Messages rendering is the same */}
         {messages.map((msg, index) => (
           <div key={index} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-lg px-4 py-2 rounded-lg text-white ${msg.role === 'user' ? 'bg-blue-600' : 'bg-gray-700'}`}>
@@ -93,30 +115,31 @@ export function ChatInterface() {
             </div>
           </div>
         ))}
-        {isLoading && ( <div className="flex justify-start"><div className="max-w-lg px-4 py-2 rounded-lg bg-gray-700 animate-pulse"><p>Thinking...</p></div></div> )}
+        {isLoading && !uploading && (<div className="flex justify-start"><div className="max-w-lg px-4 py-2 rounded-lg bg-gray-700 animate-pulse"><p>AI is thinking...</p></div></div>)}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* INPUT AREA */}
       <div className="p-4 border-t border-gray-700">
-        {/* NEW: Image Preview */}
-        {imageFile && (
+        {/* NEW: File Preview and Uploading state */}
+        {uploading && <div className="text-sm text-yellow-400 mb-2 animate-pulse">Uploading file... please wait.</div>}
+        {file && !uploading && (
           <div className="mb-2 p-2 bg-gray-700 rounded-md relative w-fit">
-            <img src={URL.createObjectURL(imageFile)} alt="preview" className="h-20 w-20 object-cover rounded"/>
-            <button onClick={() => setImageFile(null)} className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full h-6 w-6 flex items-center justify-center text-xs font-bold">X</button>
+            <p className="text-xs text-gray-300">File attached: <span className="font-semibold">{file.name}</span></p>
+            <button onClick={() => setFile(null)} className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full h-6 w-6 flex items-center justify-center text-xs font-bold">X</button>
           </div>
         )}
         <form onSubmit={handleSubmit} className="flex items-center space-x-2">
-          {/* NEW: File Upload Button */}
-          <button type="button" onClick={() => fileInputRef.current?.click()} className="p-3 bg-gray-600 rounded-full hover:bg-gray-500 transition-colors" title="Attach Image">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" /></svg>
+          {/* UPGRADED: File Upload Button */}
+          <button type="button" onClick={() => fileInputRef.current?.click()} className="p-3 bg-gray-600 rounded-full hover:bg-gray-500 transition-colors" title="Attach file">
+            📎 {/* Paperclip Icon */}
           </button>
           <input 
             type="file" 
             ref={fileInputRef} 
-            onChange={(e) => e.target.files && setImageFile(e.target.files[0])}
+            onChange={(e) => e.target.files && setFile(e.target.files[0])}
             className="hidden"
-            accept="image/*" // Accept only images
+            // Accept images, audio, and video
+            accept="image/*,audio/*,video/*" 
           />
           <input
             type="text"
