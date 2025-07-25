@@ -14,62 +14,128 @@ type Negotiation = {
   initial_price: number;
   location: string;
   vibe: string;
-  // This is the important part: the AI response is a nested object
   ai_response: {
     priceRange: string;
     reasoning: string;
     scripts: { title: string; content: string }[];
-  } | null; // It can be null if something went wrong
+  } | null;
 };
 
+// ===================================================================
+// ✨ NEW: Interactive Card Component for Each History Item
+// ===================================================================
+const HistoryItemCard = ({ item }: { item: Negotiation }) => {
+  const [isOpen, setIsOpen] = useState(false); // Manages the expand/collapse state
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+
+  const handleCopy = (text: string, index: number) => {
+    navigator.clipboard.writeText(text);
+    setCopiedIndex(index);
+    setTimeout(() => setCopiedIndex(null), 2000); // Reset after 2 seconds
+  };
+
+  return (
+    <div className="bg-gray-800 rounded-lg shadow-lg overflow-hidden transition-all duration-300">
+      {/* --- Main Clickable Header --- */}
+      <div 
+        className="p-4 cursor-pointer hover:bg-gray-700/50 flex justify-between items-center"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <div>
+          <h2 className="text-lg font-bold text-blue-400">{item.item_name}</h2>
+          <p className="text-xs text-gray-400">
+            {new Date(item.created_at).toLocaleString()}
+          </p>
+        </div>
+        <svg 
+          xmlns="http://www.w3.org/2000/svg" 
+          className={`h-6 w-6 text-gray-400 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`} 
+          fill="none" viewBox="0 0 24 24" stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </div>
+
+      {/* --- Expandable Details Section with Animation --- */}
+      <div 
+        className={`transition-all duration-500 ease-in-out ${isOpen ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0'}`}
+      >
+        <div className="px-4 pb-4 border-t border-gray-700 space-y-4">
+          {/* --- Key Info Grid --- */}
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm pt-4">
+            <div><strong>Initial Price:</strong> <span className="text-gray-300">{item.initial_price}</span></div>
+            <div><strong>Location:</strong> <span className="text-gray-300">{item.location}</span></div>
+            <div><strong>Your Vibe:</strong> <span className="text-gray-300">{item.vibe}</span></div>
+            <div><strong>AI Range:</strong> <span className="text-gray-300">{item.ai_response?.priceRange || 'N/A'}</span></div>
+          </div>
+          
+          {/* --- AI Reasoning --- */}
+          <div className="pt-2">
+            <h3 className="font-semibold text-gray-200">AI Reasoning:</h3>
+            <p className="text-sm text-gray-400 italic">"{item.ai_response?.reasoning || 'No reasoning available.'}"</p>
+          </div>
+
+          {/* --- AI Scripts with Copy Buttons --- */}
+          <div className="pt-2">
+            <h3 className="font-semibold text-gray-200">AI Scripts:</h3>
+            <div className="space-y-3 mt-2">
+              {item.ai_response?.scripts.map((script, index) => (
+                <div key={index} className="bg-gray-700 p-3 rounded-md">
+                  <div className="flex justify-between items-center mb-1">
+                    <h4 className="font-bold text-sm text-gray-300">{script.title}</h4>
+                    <button 
+                      onClick={() => handleCopy(script.content, index)}
+                      className={`text-xs text-white font-semibold py-1 px-3 rounded-md transition-all active:scale-95 ${copiedIndex === index ? 'bg-green-600' : 'bg-gray-600 hover:bg-gray-500'}`}
+                    >
+                      {copiedIndex === index ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                  <p className="text-sm text-gray-400">{script.content}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+// ===================================================================
+// ✨ Main History Page Component (No major changes here)
+// ===================================================================
 export default function HistoryPage() {
   const supabase = createClientComponentClient();
-  
-  // THE FIX IS HERE: We initialize `negotiations` as an empty array `[]`
-  // This prevents the `.map is not a function` error.
   const [negotiations, setNegotiations] = useState<Negotiation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
     const fetchUserDataAndNegotiations = async () => {
-      // First, get the current user
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        setUser(session.user);
-        
-        // If we have a user, fetch their negotiations
         try {
           const { data, error } = await supabase
             .from('negotiations')
             .select('*')
             .eq('user_id', session.user.id)
-            .order('created_at', { ascending: false }); // Show newest first
+            .order('created_at', { ascending: false });
 
-          if (error) {
-            throw error;
-          }
-          
+          if (error) throw error;
           setNegotiations(data || []);
-
         } catch (e: any) {
-          setError("Failed to load negotiation history. Please try again.");
+          setError("Failed to load negotiation history.");
           console.error("Error fetching history:", e);
         }
-
       } else {
-        // Handle case where user is not logged in
         setError("You must be logged in to view your history.");
       }
-      
       setLoading(false);
     };
-
     fetchUserDataAndNegotiations();
   }, [supabase]);
 
-  // UI for the loading state
   if (loading) {
     return (
       <div className="flex justify-center items-center min-h-screen text-white">
@@ -78,7 +144,6 @@ export default function HistoryPage() {
     );
   }
 
-  // UI for an error state
   if (error) {
     return (
       <div className="flex flex-col justify-center items-center min-h-screen text-white text-center p-4">
@@ -100,31 +165,16 @@ export default function HistoryPage() {
           </Link>
         </div>
 
-        {/* UI for when there's no history */}
         {negotiations.length === 0 ? (
           <div className="text-center bg-gray-800 p-8 rounded-lg">
             <h2 className="text-xl font-semibold">No History Found</h2>
             <p className="text-gray-400 mt-2">You haven't made any negotiations yet. Go back to the app to start!</p>
           </div>
         ) : (
-          // UI to display the list of past negotiations
-          <div className="space-y-6">
+          <div className="space-y-4">
             {negotiations.map((item) => (
-              <div key={item.id} className="bg-gray-800 p-6 rounded-lg shadow-lg">
-                <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-gray-700 pb-3 mb-4">
-                  <h2 className="text-xl font-bold text-blue-400">{item.item_name}</h2>
-                  <p className="text-sm text-gray-400 mt-1 sm:mt-0">
-                    {new Date(item.created_at).toLocaleString()}
-                  </p>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                  <div><strong>Initial Price:</strong> {item.initial_price}</div>
-                  <div><strong>Location:</strong> {item.location}</div>
-                  <div><strong>Your Vibe:</strong> {item.vibe}</div>
-                  {/* Safely access nested property */}
-                  <div><strong>AI Recommended Range:</strong> {item.ai_response?.priceRange || 'N/A'}</div>
-                </div>
-              </div>
+              // Here we use our new interactive component!
+              <HistoryItemCard key={item.id} item={item} />
             ))}
           </div>
         )}
