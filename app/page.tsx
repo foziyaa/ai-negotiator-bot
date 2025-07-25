@@ -182,6 +182,8 @@ export default function HomePage() {
             supabaseClient={supabase}
             appearance={{ theme: ThemeSupa }}
             theme="dark"
+            providers={[]} 
+  onlyThirdPartyProviders={false}
           />
         </div>
       ) : (
