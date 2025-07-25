@@ -1,58 +1,85 @@
-// File: app/api/negotiate/route.ts
-
 import { NextResponse } from 'next/server';
-import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const openai = new OpenAI(); 
+// Initialize the Google AI client
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || '');
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { itemName, category, location, price } = body;
+    // Get the new sellerDesc from the body
+    const { itemName, category, location, price, vibe, sellerDesc } = body;
 
-    // --- THE NEW "GATEKEEPER" PROMPT ---
-    const prompt = `
-      You are a two-stage AI assistant. Your FIRST and MOST IMPORTANT job is to validate user input. Your second job is to act as an expert negotiator.
+    if (!itemName || !location || !price || !vibe) {
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    }
 
-      **Stage 1: Input Validation**
-      Analyze the user's item. Does the "Item Name" seem like a real, tangible product? Or is it nonsensical gibberish (e.g., "asdfghjkl"), a random string of letters, or something that cannot be bought or sold?
+    // --- AI CHAIN STEP A: ANALYZE THE SELLER'S VIBE ---
+    let sellerAnalysis = "No description provided by user.";
 
-      - **IF the input is invalid or nonsensical:**
-        Your ONLY response MUST be a polite but firm rejection. Respond with the following exact message:
-        "I'm sorry, I couldn't recognize that as a valid product. Please enter a real-world item like 'Used iPhone 11' or 'Toyota Yaris' for a negotiation analysis."
+    // Only run this if the user actually provided a description
+    if (sellerDesc && sellerDesc.trim() !== "") {
+      const analysisModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+      const analysisPrompt = `
+        Analyze the following seller's item description to understand their personality and negotiation stance.
+        Description: "${sellerDesc}"
+        Based on the text, provide a one-sentence summary of the seller's likely vibe. For example: "The seller seems firm and direct, using phrases like 'no lowballers'." or "The seller seems friendly and eager to sell."
+      `;
+      
+      const analysisResult = await analysisModel.generateContent(analysisPrompt);
+      sellerAnalysis = analysisResult.response.text();
+    }
 
-      - **IF the input appears to be a valid product:**
-        Proceed to Stage 2.
+    // --- AI CHAIN STEP B: GENERATE THE NEGOTIATION PLAN (USING THE ANALYSIS) ---
 
-      **Stage 2: Expert Negotiation Advice (Only run if Stage 1 passes)**
-      Provide a concise and actionable negotiation plan based on the user's item.
+    const vibeInstructions: { [key: string]: string } = {
+        Friendly: "You are a friendly but savvy negotiator. Your tone should be warm, collaborative, and build rapport. Use smiley faces and positive language.",
+        Direct: "You are a direct, no-nonsense negotiator. Your goal is to get to the point quickly and efficiently. Your tone is firm, professional, but not rude. Be concise.",
+        Analytical: "You are a detail-oriented, analytical negotiator. You rely on data and logic. Your tone is inquisitive and well-reasoned. Mention market facts and potential product flaws (e.g., battery health for phones) as leverage.",
+    };
 
-      **User's Item:**
-      - Item Name: "${itemName}"
-      - Category (if provided): "${category}"
-      - Location: "${location}"
-      - Seller's Asking Price: ${price}
+    // We now include the sellerAnalysis in our main prompt!
+    const strategyPrompt = `
+        You are an expert price negotiator. A user needs advice.
 
-      **Your Three-Part Task:**
-      1.  **Key Negotiation Points:** Provide 2-3 specific, bullet-pointed questions or checks the user MUST perform, tailored to the product type (e.g., for phones, ask about battery health; for cars, ask for service history).
-      2.  **Recommended Price Range:** Suggest a realistic price range for this item in the given location.
-      3.  **Negotiation Scripts:** Provide 2 polite, short, and effective messages the user can copy and paste for their negotiation.
+        **1. User's Chosen Vibe:** ${vibe}
+        - Instructions for this Vibe: ${vibeInstructions[vibe]}
 
-      Structure your final response clearly with bold headings.
+        **2. AI Analysis of the Seller:** ${sellerAnalysis}
+        - IMPORTANT: Use this analysis to make your reasoning and scripts even more effective. If the seller is firm, your script should acknowledge that. If they seem friendly, match their tone.
+
+        **3. Item Details:**
+        - Item: "${itemName}", Category: "${category || 'N/A'}", Location: "${location}", Asking Price: ${price}
+
+        **Your Task:** Generate a negotiation plan based on all the information above.
+        **Output Format:** Respond with ONLY a single, valid JSON object. Do not include any text before or after the JSON.
+        The JSON object must have this exact structure:
+        {
+          "priceRange": "a string with the recommended price range",
+          "reasoning": "a string explaining the logic for the price range, fully adjusted for the user's vibe AND the seller's analyzed vibe",
+          "scripts": [
+            { "title": "Message 1 (Initial Offer)", "content": "The first negotiation message text, written in the selected vibe and considering the seller's vibe" },
+            { "title": "Message 2 (Follow-up)", "content": "The second negotiation message text" },
+            { "title": "Message 3 (Final Offer, if needed)", "content": "The third negotiation message text" }
+          ]
+        }
     `;
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.4, // Keep temperature low for consistency
+    const strategyModel = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash-latest",
+      generationConfig: {
+        responseMimeType: "application/json",
+      },
     });
 
-    const aiMessage = completion.choices[0].message.content;
+    const result = await strategyModel.generateContent(strategyPrompt);
+    const response = await result.response;
+    const jsonText = response.text();
 
-    return NextResponse.json({ message: aiMessage });
+    return NextResponse.json({ data: JSON.parse(jsonText) });
 
   } catch (error) {
     console.error("Error in /api/negotiate:", error);
-    return NextResponse.json({ message: 'The AI advisor is currently unavailable. Please try again later.' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to get a response from the AI service.' }, { status: 500 });
   }
 }
