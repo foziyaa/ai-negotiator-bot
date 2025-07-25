@@ -19,12 +19,9 @@ export function ChatInterface() {
   const [isLoading, setIsLoading] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-
-  // State for recording
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -70,6 +67,7 @@ export function ChatInterface() {
     }
   };
 
+  // Main submission logic (unchanged)
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!input.trim() && !file) return;
@@ -84,23 +82,17 @@ export function ChatInterface() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         setMessages(prev => [...prev, { role: 'assistant', content: "Error: You must be logged in to upload files." }]);
-        setIsLoading(false);
-        setUploading(false);
-        return;
+        setIsLoading(false); setUploading(false); return;
       }
       
       const fileName = `${user.id}/${Date.now()}-${file.name}`;
       mimeType = file.type;
 
-      const { error } = await supabase.storage
-        .from('media')
-        .upload(fileName, file);
+      const { error } = await supabase.storage.from('media').upload(fileName, file);
 
       if (error) {
         setMessages(prev => [...prev, { role: 'assistant', content: `Storage Error: ${error.message}` }]);
-        setIsLoading(false);
-        setUploading(false);
-        return;
+        setIsLoading(false); setUploading(false); return;
       }
       
       const { data: { publicUrl } } = supabase.storage.from('media').getPublicUrl(fileName);
@@ -117,14 +109,11 @@ export function ChatInterface() {
     setInput("");
     
     try {
-      // THE FIX IS HERE: We explicitly set the `method` to 'POST'.
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [...messages, userMessage],
-          fileUrl: fileUrl,
-          mimeType: mimeType,
+          messages: [...messages, userMessage], fileUrl, mimeType,
         }),
       });
 
@@ -146,11 +135,12 @@ export function ChatInterface() {
 
   return (
     <div className="flex flex-col h-[75vh] w-full bg-gray-800 rounded-lg shadow-2xl">
+      {/* CHAT AREA: Polished for mobile */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((msg, index) => (
           <div key={index} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-lg px-4 py-2 rounded-lg text-white ${msg.role === 'user' ? 'bg-blue-600' : 'bg-gray-700'}`}>
-              <p className="whitespace-pre-wrap">{msg.content}</p>
+            <div className={`max-w-[85%] sm:max-w-[75%] px-4 py-2 rounded-lg text-white ${msg.role === 'user' ? 'bg-blue-600' : 'bg-gray-700'}`}>
+              <p className="whitespace-pre-wrap break-words">{msg.content}</p>
             </div>
           </div>
         ))}
@@ -158,6 +148,7 @@ export function ChatInterface() {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* INPUT AREA: This is the fully responsive section */}
       <div className="p-4 border-t border-gray-700">
         {uploading && <div className="text-sm text-yellow-400 mb-2 animate-pulse">Uploading file... please wait.</div>}
         {isRecording && <div className="text-sm text-red-400 mb-2 animate-pulse">🔴 Recording audio...</div>}
@@ -168,46 +159,49 @@ export function ChatInterface() {
           </div>
         )}
         
-        <form onSubmit={handleSubmit} className="flex items-center space-x-2">
-          <button type="button" onClick={() => fileInputRef.current?.click()} className="p-3 bg-gray-600 rounded-full hover:bg-gray-500 transition-colors disabled:opacity-50" title="Attach file" disabled={isRecording}>
-            📎
-          </button>
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            onChange={(e) => { 
-              setFile(e.target.files ? e.target.files[0] : null); 
-              if(e.target) e.target.value = ''; // Reset input to allow re-uploading the same file
-            }} 
-            className="hidden" 
-            accept="image/*,audio/*,video/*"
-          />
+        {/* THE RESPONSIVE FORM LAYOUT */}
+        <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row items-center gap-2">
           
-          {!isRecording ? (
-            <button type="button" onClick={handleStartRecording} className="p-3 bg-gray-600 rounded-full hover:bg-gray-500 transition-colors" title="Record Audio">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M7 4a3 3 0 016 0v6a3 3 0 11-6 0V4z" /><path d="M5.5 10.5a.5.5 0 01.5-.5h8a.5.5 0 010 1h-8a.5.5 0 01-.5-.5z" /><path d="M10 18a7 7 0 100-14 7 7 0 000 14zM10 3a1 1 0 100 2 1 1 0 000-2z" /></svg>
-            </button>
-          ) : (
-            <button type="button" onClick={handleStopRecording} className="p-3 bg-red-600 rounded-full hover:bg-red-500 animate-pulse" title="Stop Recording">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1zm4 0a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
-            </button>
-          )}
+          <div className="w-full sm:flex-1 order-2 sm:order-1">
+            <input 
+              type="text" 
+              value={input} 
+              onChange={(e) => setInput(e.target.value)} 
+              placeholder="Describe the item or ask..." 
+              className="w-full bg-gray-700 border border-gray-600 rounded-md p-3 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500" 
+              disabled={isLoading || isRecording}
+            />
+          </div>
 
-          <input 
-            type="text" 
-            value={input} 
-            onChange={(e) => setInput(e.target.value)} 
-            placeholder="Describe the item or ask a question..." 
-            className="flex-1 bg-gray-700 border border-gray-600 rounded-md p-3 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500" 
-            disabled={isLoading || isRecording}
-          />
-          <button 
-            type="submit" 
-            disabled={isLoading || isRecording} 
-            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-md disabled:bg-gray-500"
-          >
-            Send
-          </button>
+          <div className="flex items-center justify-end gap-2 w-full sm:w-auto order-1 sm:order-2">
+            <button type="button" onClick={() => fileInputRef.current?.click()} className="p-3 bg-gray-600 rounded-full hover:bg-gray-500 transition-colors disabled:opacity-50" title="Attach file" disabled={isRecording}>
+              📎
+            </button>
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              onChange={(e) => { 
+                setFile(e.target.files ? e.target.files[0] : null); 
+                if(e.target) e.target.value = '';
+              }} 
+              className="hidden" 
+              accept="image/*,audio/*,video/*"
+            />
+            
+            {!isRecording ? (
+              <button type="button" onClick={handleStartRecording} className="p-3 bg-gray-600 rounded-full hover:bg-gray-500 transition-colors" title="Record Audio">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M7 4a3 3 0 016 0v6a3 3 0 11-6 0V4z" /><path d="M5.5 10.5a.5.5 0 01.5-.5h8a.5.5 0 010 1h-8a.5.5 0 01-.5-.5z" /><path d="M10 18a7 7 0 100-14 7 7 0 000 14zM10 3a1 1 0 100 2 1 1 0 000-2z" /></svg>
+              </button>
+            ) : (
+              <button type="button" onClick={handleStopRecording} className="p-3 bg-red-600 rounded-full hover:bg-red-500 animate-pulse" title="Stop Recording">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1zm4 0a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
+              </button>
+            )}
+            
+            <button type="submit" disabled={isLoading || isRecording} className="flex-grow sm:flex-grow-0 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-md disabled:bg-gray-500">
+              Send
+            </button>
+          </div>
         </form>
       </div>
     </div>
