@@ -5,7 +5,6 @@
 import { useState, useEffect } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import Link from 'next/link';
-import type { Database } from '../types/supabase'; // We'll create this type file for safety
 
 // Define the type for a single negotiation record
 type Negotiation = {
@@ -22,8 +21,8 @@ type Negotiation = {
 };
 
 export default function HistoryPage() {
-  const supabase = createClientComponentClient<Database>();
-  const [negotiations, setNegotiations] = useState<Negotiation[]>([]);
+// CHANGE IT TO THIS
+const supabase = createClientComponentClient();  const [negotiations, setNegotiations] = useState<Negotiation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
